@@ -1,0 +1,140 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------- helpers
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // The administrator is the owner's email address AND that address must be verified.
+    // Without the email_verified check, anybody could register a password account with this
+    // address (if the owner had not registered yet) and gain full write access.
+    // Keep the address in sync with ADMIN_EMAIL in src/firebase/authContext.tsx and storage.rules.
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == 'shyjuissacalex03@gmail.com'
+          && request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // A submission may only be attached to the person who is actually signed in (or to nobody).
+    function ownsOrAnonymous(data) {
+      return !('userId' in data)
+        || data.userId == null
+        || (isSignedIn() && data.userId == request.auth.uid);
+    }
+
+    function optionalString(data, field, maxLength) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLength);
+    }
+
+    function validSender(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 150;
+    }
+
+    function validMessage(data) {
+      return data.message is string && data.message.size() >= 5 && data.message.size() <= 3000;
+    }
+
+    // ------------------------------------------------------------------ rules
+
+    // Anything not matched below is denied.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Admin list. Only an existing administrator can add or remove administrators.
+    match /admins/{adminId} {
+      allow read: if isOwner(adminId) || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Website content (public read, admin-only write)
+    match /siteContent/{documentId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Prayer requests: anyone may submit; only the sender and the admin can read.
+    match /prayerRequests/{requestId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(requestId)
+        && incoming().keys().hasOnly(['id', 'name', 'email', 'phone', 'subject', 'message', 'isPrivate', 'status', 'userId', 'createdAt'])
+        && validSender(incoming())
+        && validMessage(incoming())
+        && optionalString(incoming(), 'id', 128)
+        && optionalString(incoming(), 'phone', 40)
+        && optionalString(incoming(), 'subject', 200)
+        && optionalString(incoming(), 'createdAt', 40)
+        && (!('isPrivate' in incoming()) || incoming().isPrivate is bool)
+        && incoming().status == 'pending'
+        && ownsOrAnonymous(incoming());
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    // Contact messages: anyone may submit; only the sender and the admin can read.
+    match /contactMessages/{messageId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(messageId)
+        && incoming().keys().hasOnly(['id', 'name', 'email', 'phone', 'subject', 'message', 'status', 'userId', 'createdAt'])
+        && validSender(incoming())
+        && validMessage(incoming())
+        && optionalString(incoming(), 'id', 128)
+        && optionalString(incoming(), 'phone', 40)
+        && optionalString(incoming(), 'subject', 200)
+        && optionalString(incoming(), 'createdAt', 40)
+        && incoming().status == 'unread'
+        && ownsOrAnonymous(incoming());
+      allow update, delete: if isAdmin();
+    }
+
+    // Event RSVPs: anyone may submit; only the sender and the admin can read.
+    match /eventRsvps/{rsvpId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(rsvpId)
+        && incoming().keys().hasOnly(['id', 'eventId', 'eventTitle', 'name', 'email', 'attendees', 'userId', 'createdAt'])
+        && validSender(incoming())
+        && incoming().eventTitle is string && incoming().eventTitle.size() <= 200
+        && optionalString(incoming(), 'id', 128)
+        && optionalString(incoming(), 'eventId', 128)
+        && optionalString(incoming(), 'attendees', 10)
+        && optionalString(incoming(), 'createdAt', 40)
+        && ownsOrAnonymous(incoming());
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    // Member profiles: each member manages only their own, and cannot mark themselves as admin.
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isOwner(userId)
+        && incoming().keys().hasOnly(['userId', 'displayName', 'email', 'photoURL', 'isAdmin', 'role', 'createdAt', 'lastLoginAt'])
+        && incoming().userId == userId
+        && incoming().email is string && incoming().email.size() <= 150
+        && optionalString(incoming(), 'displayName', 200)
+        && optionalString(incoming(), 'photoURL', 2000)
+        && optionalString(incoming(), 'createdAt', 40)
+        && optionalString(incoming(), 'lastLoginAt', 40)
+        && (!('isAdmin' in incoming()) || incoming().isAdmin == false || isAdmin())
+        && (!('role' in incoming()) || incoming().role == 'Member' || isAdmin());
+      allow delete: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,36 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Same administrator as firestore.rules and ADMIN_EMAIL in src/firebase/authContext.tsx.
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email == 'shyjuissacalex03@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    // Only images, 5 MB at most (the website shrinks large photos before uploading).
+    function isSmallImage() {
+      return request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Images uploaded from the website's content editor. Everyone can view them.
+    match /church_content/{fileName} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isSmallImage();
+      allow delete: if isAdmin();
+    }
+
+    match /church_media/{fileName} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isSmallImage();
+      allow delete: if isAdmin();
+    }
+
+    // Everything else is locked.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

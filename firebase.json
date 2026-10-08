@@ -1,0 +1,9 @@
+{
+  "firestore": {
+    "database": "ai-studio-thegreatmissionc-b0a51e3f-cce4-4e2e-82a7-5d9b232e1cc3",
+    "rules": "firestore.rules"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  }
+}
